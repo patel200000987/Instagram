@@ -1,0 +1,11 @@
+[project]
+name = "ig-downloader-api"
+version = "1.0.0"
+description = "Instagram Reel Downloader API"
+requires-python = ">=3.9"
+dependencies = [
+    "requests==2.31.0"
+]
+
+[tool.vercel]
+entrypoint = "api/download.py:handler"
