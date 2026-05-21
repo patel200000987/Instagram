@@ -29,7 +29,6 @@ def get_instagram_video(url):
         if response.status_code == 200:
             data = response.json()
             
-            # Try different response formats
             video_url = data.get("video_url") or data.get("video") or data.get("url") or data.get("download_url")
             
             if not video_url and data.get("result"):
@@ -78,7 +77,6 @@ def download():
             "developer": DEVELOPER
         }), 400
     
-    # Validate Instagram URL
     if not ("instagram.com/reel/" in url or "instagram.com/p/" in url):
         return jsonify({
             "status": False,
