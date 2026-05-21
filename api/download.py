@@ -1,88 +1,44 @@
 import re
-import requests
 import json
+import subprocess
+import tempfile
+import os
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 class handler(BaseHTTPRequestHandler):
     
     def do_GET(self):
-        """Handle GET requests"""
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
         
-        if parsed.path == '/api/download':
+        if parsed.path == '/api/download' or parsed.path == '/download':
             url = params.get('url', [''])[0]
             
             if not url:
-                self.send_response(400)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": False,
-                    "error": "No URL provided",
-                    "message": "Please provide ?url=INSTAGRAM_REEL_URL"
-                }).encode())
+                self._send_json(400, {"status": False, "error": "No URL provided"})
                 return
             
-            # Validate Instagram URL
-            if not ("instagram.com/reel/" in url or "instagram.com/p/" in url):
-                self.send_response(400)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": False,
-                    "error": "Invalid URL",
-                    "message": "Please provide a valid Instagram Reel URL"
-                }).encode())
+            if not ("instagram.com/reel/" in url or "instagram.com/p/" in url or "instagram.com/reels/" in url):
+                self._send_json(400, {"status": False, "error": "Invalid Instagram URL"})
                 return
             
-            # Get video URL
-            video_url = self.extract_video(url)
+            # Extract video using yt-dlp
+            video_url = self._extract_with_ytdlp(url)
             
             if video_url:
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": True,
-                    "video_url": video_url,
-                    "thumbnail": None,
-                    "message": "Video fetched successfully"
-                }).encode())
+                self._send_json(200, {"status": True, "video_url": video_url})
             else:
-                self.send_response(404)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": False,
-                    "error": "Failed to fetch video",
-                    "message": "Could not extract video. Try another URL."
-                }).encode())
+                self._send_json(404, {"status": False, "error": "Failed to fetch video"})
         
-        elif parsed.path == '/api/health' or parsed.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "service": "Instagram Downloader API",
-                "endpoints": {
-                    "download": "/api/download?url=INSTAGRAM_URL",
-                    "health": "/api/health"
-                }
-            }).encode())
+        elif parsed.path == '/api/health' or parsed.path == '/health' or parsed.path == '/':
+            self._send_json(200, {"status": "ok", "service": "Instagram Downloader API (yt-dlp)"})
         
         else:
-            self.send_response(404)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "Not found"}).encode())
+            self._send_json(404, {"error": "Not found"})
     
     def do_POST(self):
-        """Handle POST requests"""
-        if self.path == '/api/download':
+        if self.path == '/api/download' or self.path == '/download':
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             
@@ -93,127 +49,61 @@ class handler(BaseHTTPRequestHandler):
                 url = ''
             
             if not url:
-                self.send_response(400)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": False,
-                    "error": "No URL provided"
-                }).encode())
+                self._send_json(400, {"status": False, "error": "No URL provided"})
                 return
             
-            # Validate Instagram URL
-            if not ("instagram.com/reel/" in url or "instagram.com/p/" in url):
-                self.send_response(400)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": False,
-                    "error": "Invalid URL"
-                }).encode())
+            if not ("instagram.com/reel/" in url or "instagram.com/p/" in url or "instagram.com/reels/" in url):
+                self._send_json(400, {"status": False, "error": "Invalid Instagram URL"})
                 return
             
-            video_url = self.extract_video(url)
+            video_url = self._extract_with_ytdlp(url)
             
             if video_url:
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": True,
-                    "video_url": video_url
-                }).encode())
+                self._send_json(200, {"status": True, "video_url": video_url})
             else:
-                self.send_response(404)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": False,
-                    "error": "Failed to fetch video"
-                }).encode())
+                self._send_json(404, {"status": False, "error": "Failed to fetch video"})
+        else:
+            self._send_json(404, {"error": "Not found"})
     
-    def extract_video(self, url):
-        """Extract video URL from Instagram"""
-        
-        # Clean URL
-        url = url.split('?')[0].rstrip('/')
-        
-        # Extract shortcode
-        shortcode_match = re.search(r'instagram\.com/(?:reel|p)/([a-zA-Z0-9_-]+)', url)
-        if not shortcode_match:
-            return None
-        
-        shortcode = shortcode_match.group(1)
-        print(f"📡 Shortcode: {shortcode}")
-        
-        # Try embed page method
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        }
-        
-        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/"
-        
+    def _extract_with_ytdlp(self, url):
+        """Extract video URL using yt-dlp"""
         try:
-            resp = requests.get(embed_url, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                # Search for video URL
-                video_patterns = [
-                    r'"video_url":"([^"]+)"',
-                    r'<meta property="og:video" content="([^"]+)"',
+            # Create temp directory
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # yt-dlp command to get video URL without downloading
+                cmd = [
+                    "yt-dlp",
+                    "-g",  # Get URL only, no download
+                    "--no-warnings",
+                    url
                 ]
-                for pattern in video_patterns:
-                    match = re.search(pattern, resp.text)
-                    if match:
-                        video_url = match.group(1).replace('\\/', '/')
+                
+                print(f"📡 Running: {' '.join(cmd)}")
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    video_url = result.stdout.strip()
+                    if video_url and video_url.startswith('http'):
+                        print(f"✅ Video URL extracted: {video_url[:80]}...")
                         return video_url
-        except:
-            pass
-        
-        # Try Instagram API
-        api_headers = {
-            "User-Agent": "Instagram 123.0.0.21.114 (iPhone; iOS 15_0; en_US; en)",
-            "Accept": "application/json",
-        }
-        
-        api_url = f"https://www.instagram.com/api/v1/media/{shortcode}/info/"
-        
-        try:
-            resp = requests.get(api_url, headers=api_headers, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data.get("items", [])
-                if items:
-                    video_versions = items[0].get("video_versions", [])
-                    if video_versions:
-                        return video_versions[0].get("url")
-        except:
-            pass
-        
-        return None
-
-
-def extract_video_url(url):
-    """Simple function for direct import"""
-    shortcode_match = re.search(r'instagram\.com/(?:reel|p)/([a-zA-Z0-9_-]+)', url)
-    if not shortcode_match:
-        return None
+                    else:
+                        print(f"❌ Invalid URL: {video_url}")
+                        return None
+                else:
+                    print(f"❌ yt-dlp error: {result.stderr}")
+                    return None
+                    
+        except subprocess.TimeoutExpired:
+            print("❌ yt-dlp timeout")
+            return None
+        except Exception as e:
+            print(f"❌ Exception: {e}")
+            return None
     
-    shortcode = shortcode_match.group(1)
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
-    
-    embed_url = f"https://www.instagram.com/p/{shortcode}/embed/"
-    
-    try:
-        resp = requests.get(embed_url, headers=headers, timeout=15)
-        if resp.status_code == 200:
-            match = re.search(r'"video_url":"([^"]+)"', resp.text)
-            if match:
-                return match.group(1).replace('\\/', '/')
-    except:
-        pass
-    
-    return None
+    def _send_json(self, status_code, data):
+        self.send_response(status_code)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
