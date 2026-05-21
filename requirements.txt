@@ -1,1 +1,1 @@
-requests==2.31.0
+# No Python dependencies needed - yt-dlp is installed via system
