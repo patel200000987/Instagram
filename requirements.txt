@@ -1,1 +1,2 @@
-# No Python dependencies needed - yt-dlp is installed via system
+flask==2.3.3
+requests==2.31.0
